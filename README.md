@@ -156,25 +156,3 @@ Seeded data to play with:
 Click any tool chip under an agent message to see the exact arguments and the raw
 result it grounded its answer on — including a `⚠️ grounding_check` chip on any
 reply the grounding net holds back.
-
----
-
-## What I'd change for production
-
-- **Grow the eval harness.** A starter harness ships today (`npm run eval` —
-  scripted trajectories with assertions on tool use and grounding). The
-  production version scales to hundreds of conversations per workflow, adds an
-  LLM-as-judge for qualities the deterministic checks can't score (tone, empathy,
-  helpfulness), and gates every deploy in CI on resolution / hallucination /
-  false-escalation rates — so correctness stops being vibes.
-- **Regenerate instead of escalating** when the grounding check fires. Today a
-  blocked reply hands off to a human (safe but blunt); in production I'd re-prompt
-  the model with the specific unsupported values and only escalate if it still
-  can't ground them. I'd also add an LLM grounding verifier for claims that aren't
-  simple values (e.g. a paraphrased policy), which the deterministic check can't catch.
-- **Embedding-based retrieval (pgvector)** once the policy set grows past a handful
-  of docs. Today the whole policy set fits in context, so we hand the model all of
-  it and let it pick; at thousands of docs you'd embed them and let Postgres do
-  similarity search, behind the same `searchPolicies` signature.
-- **Real auth** (email OTP) instead of order-number-plus-email as the identity
-  check, plus streaming, tracing on every tool call, and a real human-handoff queue.
