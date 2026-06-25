@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, RefObject } from "react";
 
 type ToolTrace = { name: string; args: any; result: string };
 type Msg = { role: "user" | "assistant"; content: string; trace?: ToolTrace[] };
@@ -12,12 +12,13 @@ const SUGGESTIONS = [
   "There's a problem with my order",
 ];
 
+// ---------------------------------------------------------------------------
+// Page: owns the conversation state and the send logic. All markup lives in the
+// small presentational components below, so this stays a readable orchestrator.
+// ---------------------------------------------------------------------------
 export default function Page() {
   const [messages, setMessages] = useState<Msg[]>([
-    {
-      role: "assistant",
-      content: "Hi! I'm Bookly's support agent. How can I help you today?",
-    },
+    { role: "assistant", content: "Hi! I'm Bookly's support agent. How can I help you today?" },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -66,53 +67,97 @@ export default function Page() {
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="wordmark">
-          Bookly<span className="dot">.</span> Support
-        </div>
-        <div className="subhead">Order status · Returns & refunds · Policies</div>
-      </header>
+      <Header />
+      <MessageList messages={messages} loading={loading} scrollRef={scrollRef} />
+      <Composer input={input} setInput={setInput} onSend={send} loading={loading} />
+    </div>
+  );
+}
 
-      <div className="messages" ref={scrollRef}>
-        {messages.map((m, i) => (
-          <div key={i}>
-            <div className={`row ${m.role}`}>
-              <div className="bubble">{m.content}</div>
-            </div>
-            {m.trace && m.trace.length > 0 && <Trace trace={m.trace} />}
-          </div>
-        ))}
-        {loading && (
-          <div className="row assistant">
-            <div className="bubble dots">
-              <span>•</span>
-              <span>•</span>
-              <span>•</span>
-            </div>
-          </div>
-        )}
+// ---------------------------------------------------------------------------
+// Presentational components — pure markup, no logic of their own.
+// ---------------------------------------------------------------------------
+
+function Header() {
+  return (
+    <header className="header">
+      <div className="wordmark">
+        Bookly<span className="dot">.</span> Support
       </div>
+      <div className="subhead">Order status · Returns & refunds · Policies</div>
+    </header>
+  );
+}
 
-      <div className="composer">
-        <div className="suggests">
-          {SUGGESTIONS.map((s) => (
-            <button key={s} className="suggest" onClick={() => send(s)} disabled={loading}>
-              {s}
-            </button>
-          ))}
+function MessageList({
+  messages,
+  loading,
+  scrollRef,
+}: {
+  messages: Msg[];
+  loading: boolean;
+  scrollRef: RefObject<HTMLDivElement>;
+}) {
+  return (
+    <div className="messages" ref={scrollRef}>
+      {messages.map((m, i) => (
+        <MessageRow key={i} msg={m} />
+      ))}
+      {loading && (
+        <div className="row assistant">
+          <div className="bubble dots">
+            <span>•</span>
+            <span>•</span>
+            <span>•</span>
+          </div>
         </div>
-        <div className="input-row">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send(input)}
-            placeholder="Type a message…"
-            disabled={loading}
-          />
-          <button onClick={() => send(input)} disabled={loading || !input.trim()}>
-            Send
+      )}
+    </div>
+  );
+}
+
+function MessageRow({ msg }: { msg: Msg }) {
+  return (
+    <div>
+      <div className={`row ${msg.role}`}>
+        <div className="bubble">{msg.content}</div>
+      </div>
+      {msg.trace && msg.trace.length > 0 && <Trace trace={msg.trace} />}
+    </div>
+  );
+}
+
+function Composer({
+  input,
+  setInput,
+  onSend,
+  loading,
+}: {
+  input: string;
+  setInput: (v: string) => void;
+  onSend: (text: string) => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="composer">
+      <div className="suggests">
+        {SUGGESTIONS.map((s) => (
+          <button key={s} className="suggest" onClick={() => onSend(s)} disabled={loading}>
+            {s}
           </button>
-        </div>
+        ))}
+      </div>
+      <div className="input-row">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onSend(input)}
+          placeholder="Type a message…"
+          disabled={loading}
+        />
+        <button onClick={() => onSend(input)} disabled={loading || !input.trim()}>
+          Send
+        </button>
       </div>
     </div>
   );
