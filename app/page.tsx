@@ -191,6 +191,7 @@ function labelFor(name: string): string {
     process_refund: "💵 process_refund",
     search_policies: "📚 search_policies",
     escalate_to_human: "🙋 escalate_to_human",
+    grounding_check: "⚠️ grounding_check",
   };
   return icons[name] ?? name;
 }

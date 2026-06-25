@@ -55,7 +55,27 @@ export async function runAgent(
 
     // No tool calls -> the model is done and this is the reply to the customer.
     if (!choice.tool_calls || choice.tool_calls.length === 0) {
-      return { reply: choice.content ?? "", trace };
+      const reply = choice.content ?? "";
+
+      // Last line of defense: verify every dollar amount and ID in the reply
+      // traces back to a tool result or something the customer said. If it
+      // doesn't, we don't gamble — we hold the reply and hand off.
+      const sources = collectSources(trace, messages);
+      const unsupported = findUnsupportedValues(reply, sources);
+      if (unsupported.length > 0) {
+        trace.push({
+          name: "grounding_check",
+          args: { unsupported },
+          result: "BLOCKED — reply contained values not found in any tool result",
+        });
+        return {
+          reply:
+            "Let me double-check those details with a specialist so I get them exactly right — they'll follow up by email shortly.",
+          trace,
+        };
+      }
+
+      return { reply, trace };
     }
 
     // Otherwise run each requested tool and feed the results back in.
@@ -79,10 +99,48 @@ export async function runAgent(
   };
 }
 
-function safeParse(s: string): any {
+function safeParse(s: string): Record<string, unknown> {
   try {
-    return JSON.parse(s);
+    return JSON.parse(s) as Record<string, unknown>;
   } catch {
     return {};
   }
+}
+
+// Everything the reply is ALLOWED to draw facts from this turn: the raw tool
+// results, plus what the customer themselves typed (so echoing the order number
+// they just gave us is fine).
+function collectSources(
+  trace: ToolTrace[],
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+): string {
+  const toolText = trace.map((t) => t.result).join("\n");
+  const userText = messages
+    .filter((m) => m.role === "user" && typeof m.content === "string")
+    .map((m) => m.content as string)
+    .join("\n");
+  return toolText + "\n" + userText;
+}
+
+// Deterministic, no-LLM grounding check. Returns any high-risk values in the
+// reply that don't trace back to the sources. We only police the values that
+// actually hurt if fabricated — money and identifiers — to keep false positives
+// near zero. This is a net under the prompt-level rules, not a replacement.
+export function findUnsupportedValues(reply: string, sources: string): string[] {
+  const unsupported: string[] = [];
+
+  // Money: compare by numeric value, so a reply's "$42" is supported by a tool
+  // result's "42.00". Allowed numbers = every number appearing in the sources.
+  const allowedNumbers = new Set((sources.match(/\d+(?:\.\d+)?/g) ?? []).map(Number));
+  for (const m of reply.matchAll(/\$\s?(\d+(?:\.\d{1,2})?)/g)) {
+    if (!allowedNumbers.has(Number(m[1]))) unsupported.push("$" + m[1]);
+  }
+
+  // Identifiers: order / RMA / ticket / tracking tokens must appear verbatim.
+  const lowerSources = sources.toLowerCase();
+  for (const m of reply.matchAll(/\b(?:BK-\d+|RMA-\d+|TICKET-\d+|1Z[A-Z0-9]{6,})\b/gi)) {
+    if (!lowerSources.includes(m[0].toLowerCase())) unsupported.push(m[0]);
+  }
+
+  return unsupported;
 }
