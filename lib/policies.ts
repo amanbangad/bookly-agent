@@ -1,54 +1,38 @@
-import OpenAI from "openai";
-import { sql } from "./db";
+import { POLICY_DOCS } from "./policies-data";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Lightweight policy retrieval over Bookly's docs (lib/policies-data.ts).
+//
+// With only a handful of short docs, embedding-based search would be
+// over-engineering: a keyword match returns the same doc. The grounding
+// guarantee doesn't come from HOW we find the doc — it comes from the agent
+// answering ONLY from the text we hand back (enforced in the system prompt).
+// At real scale this function swaps to embeddings / pgvector behind the exact
+// same signature, and nothing else changes.
 
-export const EMBEDDING_MODEL = "text-embedding-3-small";
+const STOPWORDS = new Set([
+  "the", "a", "an", "is", "are", "do", "does", "i", "my", "to", "of", "for",
+  "and", "on", "in", "can", "you", "your", "with", "how", "what", "when",
+  "where", "it", "this", "that", "be", "have", "get",
+]);
 
-// Embed a single piece of text. Used both by the seed script (to embed each
-// policy doc once) and at query time (to embed the user's question).
-export async function embed(text: string): Promise<number[]> {
-  const res = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
-  });
-  return res.data[0].embedding;
+function tokenize(s: string): string[] {
+  return (s.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => !STOPWORDS.has(w));
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-type PolicyRow = { id: string; title: string; body: string; embedding: string };
-
-// Retrieve the policy docs most relevant to a question. We only have ~6 docs,
-// so we fetch them all and rank in JS — no vector index needed. At real scale
-// this becomes a pgvector similarity query (noted in the README), but the
-// retrieval *contract* the agent depends on stays identical.
-export async function searchPolicies(
+// Score each doc by how many of the question's meaningful words it contains,
+// return the best matches.
+export function searchPolicies(
   query: string,
   topK = 2
-): Promise<{ title: string; body: string; score: number }[]> {
-  const queryEmbedding = await embed(query);
+): { title: string; body: string; score: number }[] {
+  const terms = tokenize(query);
 
-  const rows = (await sql`
-    SELECT id, title, body, embedding FROM policies
-  `) as PolicyRow[];
-
-  return rows
-    .map((row) => ({
-      title: row.title,
-      body: row.body,
-      score: cosineSimilarity(queryEmbedding, JSON.parse(row.embedding)),
-    }))
+  return POLICY_DOCS.map((doc) => {
+    const haystack = (doc.title + " " + doc.body).toLowerCase();
+    const score = terms.reduce((n, term) => n + (haystack.includes(term) ? 1 : 0), 0);
+    return { title: doc.title, body: doc.body, score };
+  })
+    .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
 }

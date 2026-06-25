@@ -1,12 +1,10 @@
 import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" }); // same env file Next.js uses
 import { neon } from "@neondatabase/serverless";
-import OpenAI from "openai";
-import { POLICY_DOCS } from "../lib/policies-data";
 
 // Run once: `npm run seed`. Re-runnable — it drops and recreates the tables.
+// Only needs DATABASE_URL now (policies are read from a file, not the DB).
 const sql = neon(process.env.DATABASE_URL!);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const ORDERS = [
   {
@@ -60,7 +58,7 @@ async function main() {
   console.log("Dropping and recreating tables...");
   await sql`DROP TABLE IF EXISTS returns`;
   await sql`DROP TABLE IF EXISTS orders`;
-  await sql`DROP TABLE IF EXISTS policies`;
+  await sql`DROP TABLE IF EXISTS policies`; // cleanup if an older seed created it
 
   await sql`
     CREATE TABLE orders (
@@ -85,15 +83,6 @@ async function main() {
     )
   `;
 
-  await sql`
-    CREATE TABLE policies (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      embedding TEXT NOT NULL
-    )
-  `;
-
   console.log("Seeding orders...");
   for (const o of ORDERS) {
     await sql`
@@ -102,20 +91,7 @@ async function main() {
     `;
   }
 
-  console.log("Embedding and seeding policies...");
-  for (const doc of POLICY_DOCS) {
-    const res = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: `${doc.title}\n${doc.body}`,
-    });
-    const embedding = JSON.stringify(res.data[0].embedding);
-    await sql`
-      INSERT INTO policies (id, title, body, embedding)
-      VALUES (${doc.id}, ${doc.title}, ${doc.body}, ${embedding})
-    `;
-  }
-
-  console.log(`Done. Seeded ${ORDERS.length} orders and ${POLICY_DOCS.length} policies.`);
+  console.log(`Done. Seeded ${ORDERS.length} orders.`);
 }
 
 main().catch((err) => {

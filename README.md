@@ -23,8 +23,8 @@ app/api/chat/route.ts single endpoint
 lib/agent.ts          the orchestrator: system prompt + tool-calling loop
       ├─► lib/tools.ts     the actions: lookup_order, initiate_return,
       │                    process_refund, search_policies, escalate_to_human
-      ├─► lib/policies.ts  embedding retrieval over Bookly's policy docs
-      └─► lib/db.ts        Neon Postgres (orders, returns, policies)
+      ├─► lib/policies.ts  keyword lookup over Bookly's policy docs (a TS file)
+      └─► lib/db.ts        Neon Postgres (orders, returns)
 ```
 
 The agent is a **single orchestrator with a tool belt** — not a multi-agent
@@ -38,8 +38,9 @@ Three design commitments shape everything:
 1. **Resolve, don't deflect.** Tools change real state (`initiate_return` writes
    a row and returns an RMA), they don't just look things up.
 2. **Grounded or silent.** Order facts come from tool results, policy answers
-   from retrieval — never the model's memory. The system prompt forbids
-   unsourced claims.
+   from Bookly's actual docs — never the model's memory. The grounding holds
+   because the agent answers only from text we hand it, not because of how we
+   find that text (see the policy-retrieval note below).
 3. **Know the edge.** The agent asks when info is missing or intent is unclear,
    and escalates when stakes exceed its authority. The refund limit is enforced
    in `tools.ts`, in code — not just requested in the prompt.
@@ -61,7 +62,7 @@ cp .env.example .env.local
 #   OPENAI_API_KEY=sk-...
 #   DATABASE_URL=postgresql://...   (your Neon connection string)
 
-# 3. create tables + seed orders and embed the policy docs (run once)
+# 3. create tables + seed the fake orders (run once; only needs DATABASE_URL)
 npm run seed
 
 # 4. start
@@ -118,9 +119,11 @@ raw result it grounded its answer on.
 - **An eval harness first.** A set of labeled conversation trajectories with
   expected tool calls and outcomes, scored on resolution rate, hallucination
   rate, and false-escalation rate — so correctness stops being vibes.
-- **pgvector** for retrieval instead of fetching all docs and ranking in JS
-  (fine at 6 docs, not at 6,000). Since we're already on Postgres, it's a small
-  change behind the same `searchPolicies` contract.
+- **Embedding-based retrieval (pgvector)** once the policy set grows past a
+  handful of docs. Today a keyword match over six short docs returns the right
+  one and is trivial to reason about; at thousands of docs you'd embed them and
+  let Postgres do similarity search. It drops in behind the same `searchPolicies`
+  signature, so nothing else changes.
 - **Real auth** (email OTP) instead of order-number-plus-email as the identity
   check, and proper streaming, tracing on every tool call, and a real
   human-handoff queue.
