@@ -83,7 +83,7 @@ async function initiateReturn(args: { order_id: string; email: string; reason: s
   return JSON.stringify({
     success: true,
     return_id: returnId,
-    message: `Return started. A prepaid label was emailed to ${order.customer_email}. Refund of $${order.total} issues to the original payment method once the book is received.`,
+    message: `Return started. A prepaid label was emailed to ${order.customer_email}. Refund of $${order.total} issued to the original payment method once the book is received.`,
   });
 }
 
