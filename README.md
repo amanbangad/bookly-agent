@@ -127,4 +127,3 @@ raw result it grounded its answer on.
 - **Real auth** (email OTP) instead of order-number-plus-email as the identity
   check, and proper streaming, tracing on every tool call, and a real
   human-handoff queue.
-```

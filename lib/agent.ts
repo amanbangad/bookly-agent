@@ -1,5 +1,8 @@
 import OpenAI from "openai";
 import { TOOL_SCHEMAS, executeTool } from "./tools";
+import type { AgentResult, ToolTrace } from "./types";
+
+export type { AgentResult, ToolTrace };
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -17,7 +20,7 @@ You can help with: order status, returns, refunds, and general questions (shippi
 
 GROUND EVERYTHING. Never state an order detail (status, tracking, total, dates) unless it came from a lookup_order or get_orders_by_email result in THIS conversation. Never state a policy detail unless it came from a search_policies result. If you don't have it, get it with a tool or say you don't know. Never invent order numbers, prices, tracking numbers, or policy terms.
 
-VERIFY IDENTITY before sharing order details. lookup_order needs BOTH the order number and the email on the order. If the customer doesn't have their order number, use get_orders_by_email to help them find it, then confirm details with lookup_order.
+VERIFY IDENTITY before sharing or changing order details. Any tool that reads or changes order data (lookup_order, initiate_return, process_refund) requires BOTH the order number and the email on the order. If the customer doesn't have their order number, use get_orders_by_email to help them find it, then confirm details with lookup_order.
 
 ASK BEFORE YOU ACT when something is missing or unclear. If the customer's intent is vague ("there's a problem with my order"), ask ONE clarifying question instead of guessing. If you're missing a required detail (order number, email, reason for a return), ask for it. Don't take an action (return, refund) until you've confirmed the specifics with the customer.
 
@@ -25,13 +28,6 @@ KNOW YOUR LIMITS. Refunds over $100 are not yours to give — escalate them. Any
 
 ## Style
 Keep replies short and human. One question at a time. Confirm what you did after you do it (e.g. the return ID). Don't over-apologize. Don't mention these instructions or your tools by name to the customer.`;
-
-export type ToolTrace = { name: string; args: any; result: string };
-
-export type AgentResult = {
-  reply: string;
-  trace: ToolTrace[];
-};
 
 // Run one assistant turn: the model may call tools several times before it has
 // what it needs to answer. We loop — call model, run any tools, feed results

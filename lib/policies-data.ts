@@ -1,7 +1,5 @@
 // Bookly's policy knowledge base. In production this would live in a CMS or
-// help-center export; here it's a small fixed set. Each doc is embedded once
-// (see scripts/seed.ts) so the agent can retrieve the relevant policy instead
-// of answering shipping/returns/password questions from the model's memory.
+// help-center export; here it's a small fixed set. 
 
 export type PolicyDoc = { id: string; title: string; body: string };
 

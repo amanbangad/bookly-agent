@@ -18,6 +18,24 @@ type Order = {
   placed_at: string;
 };
 
+const IDENTITY_MISMATCH =
+  "No order matches that order number and email together. Ask the customer to double-check both.";
+
+async function verifyOrderIdentity(order_id: string, email: string) {
+  const rows = (await sql`
+    SELECT * FROM orders
+    WHERE order_id = ${order_id}
+      AND lower(customer_email) = lower(${email})
+  `) as Order[];
+
+  if (rows.length === 0) {
+    // Note we don't reveal whether the order number OR the email was wrong —
+    // requiring both is our lightweight identity check.
+    return { ok: false as const, message: IDENTITY_MISMATCH };
+  }
+  return { ok: true as const, order: rows[0] };
+}
+
 // ---------------------------------------------------------------------------
 // Tool implementations. Each returns a JSON string that is fed back to the
 // model as the tool result. Returning structured, factual data (not prose) is
@@ -25,22 +43,11 @@ type Order = {
 // ---------------------------------------------------------------------------
 
 async function lookupOrder(args: { order_id: string; email: string }) {
-  const rows = (await sql`
-    SELECT * FROM orders
-    WHERE order_id = ${args.order_id}
-      AND lower(customer_email) = lower(${args.email})
-  `) as Order[];
-
-  if (rows.length === 0) {
-    // Note we don't reveal whether the order number OR the email was wrong —
-    // requiring both is our lightweight identity check.
-    return JSON.stringify({
-      found: false,
-      message:
-        "No order matches that order number and email together. Ask the customer to double-check both.",
-    });
+  const result = await verifyOrderIdentity(args.order_id, args.email);
+  if (!result.ok) {
+    return JSON.stringify({ found: false, message: result.message });
   }
-  return JSON.stringify({ found: true, order: rows[0] });
+  return JSON.stringify({ found: true, order: result.order });
 }
 
 async function getOrdersByEmail(args: { email: string }) {
@@ -60,32 +67,27 @@ async function getOrdersByEmail(args: { email: string }) {
   });
 }
 
-async function initiateReturn(args: { order_id: string; reason: string }) {
-  const orders = (await sql`
-    SELECT * FROM orders WHERE order_id = ${args.order_id}
-  `) as Order[];
-
-  if (orders.length === 0) {
-    return JSON.stringify({
-      success: false,
-      message: "That order number doesn't exist. Don't start a return for it.",
-    });
+async function initiateReturn(args: { order_id: string; email: string; reason: string }) {
+  const result = await verifyOrderIdentity(args.order_id, args.email);
+  if (!result.ok) {
+    return JSON.stringify({ success: false, message: result.message });
   }
 
+  const { order } = result;
   const returnId = "RMA-" + Math.floor(100000 + Math.random() * 900000);
   await sql`
     INSERT INTO returns (return_id, order_id, reason, refund_amount, status)
-    VALUES (${returnId}, ${args.order_id}, ${args.reason}, ${orders[0].total}, 'label_sent')
+    VALUES (${returnId}, ${args.order_id}, ${args.reason}, ${order.total}, 'label_sent')
   `;
 
   return JSON.stringify({
     success: true,
     return_id: returnId,
-    message: `Return started. A prepaid label was emailed to ${orders[0].customer_email}. Refund of $${orders[0].total} issues to the original payment method once the book is received.`,
+    message: `Return started. A prepaid label was emailed to ${order.customer_email}. Refund of $${order.total} issues to the original payment method once the book is received.`,
   });
 }
 
-async function processRefund(args: { order_id: string; amount: number }) {
+async function processRefund(args: { order_id: string; email: string; amount: number }) {
   // The guardrail. Above the limit we refuse to auto-process and tell the
   // agent to escalate — regardless of what the conversation pressured it to do.
   if (args.amount > REFUND_AUTO_APPROVE_LIMIT) {
@@ -96,11 +98,9 @@ async function processRefund(args: { order_id: string; amount: number }) {
     });
   }
 
-  const orders = (await sql`
-    SELECT * FROM orders WHERE order_id = ${args.order_id}
-  `) as Order[];
-  if (orders.length === 0) {
-    return JSON.stringify({ success: false, message: "Order not found." });
+  const result = await verifyOrderIdentity(args.order_id, args.email);
+  if (!result.ok) {
+    return JSON.stringify({ success: false, message: result.message });
   }
 
   await sql`UPDATE orders SET status = 'refunded' WHERE order_id = ${args.order_id}`;
@@ -169,14 +169,15 @@ export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "initiate_return",
       description:
-        "Start a return for an order. Only call after confirming which order and the reason with the customer. Creates a return record and emails a prepaid label.",
+        "Start a return for an order. Requires BOTH the order number and the email on the order to verify identity. Only call after confirming which order and the reason with the customer. Creates a return record and emails a prepaid label.",
       parameters: {
         type: "object",
         properties: {
           order_id: { type: "string" },
+          email: { type: "string", description: "Email on the order — required to verify identity" },
           reason: { type: "string", description: "Why the customer is returning it" },
         },
-        required: ["order_id", "reason"],
+        required: ["order_id", "email", "reason"],
       },
     },
   },
@@ -185,14 +186,15 @@ export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "process_refund",
       description:
-        "Issue an immediate refund to the original payment method (e.g. a damaged item the customer keeps). Refunds over $100 will be rejected and must be escalated.",
+        "Issue an immediate refund to the original payment method (e.g. a damaged item the customer keeps). Requires BOTH the order number and the email on the order to verify identity. Refunds over $100 will be rejected and must be escalated.",
       parameters: {
         type: "object",
         properties: {
           order_id: { type: "string" },
+          email: { type: "string", description: "Email on the order — required to verify identity" },
           amount: { type: "number", description: "Refund amount in dollars" },
         },
-        required: ["order_id", "amount"],
+        required: ["order_id", "email", "amount"],
       },
     },
   },

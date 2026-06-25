@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, RefObject } from "react";
-
-type ToolTrace = { name: string; args: any; result: string };
-type Msg = { role: "user" | "assistant"; content: string; trace?: ToolTrace[] };
+import type { ChatMessage, ToolTrace } from "@/lib/types";
 
 const SUGGESTIONS = [
   "Where's my order?",
@@ -17,7 +15,7 @@ const SUGGESTIONS = [
 // small presentational components below, so this stays a readable orchestrator.
 // ---------------------------------------------------------------------------
 export default function Page() {
-  const [messages, setMessages] = useState<Msg[]>([
+  const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", content: "Hi! I'm Bookly's support agent. How can I help you today?" },
   ]);
   const [input, setInput] = useState("");
@@ -32,7 +30,7 @@ export default function Page() {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    const next: Msg[] = [...messages, { role: "user", content: trimmed }];
+    const next: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
     setMessages(next);
     setInput("");
     setLoading(true);
@@ -94,7 +92,7 @@ function MessageList({
   loading,
   scrollRef,
 }: {
-  messages: Msg[];
+  messages: ChatMessage[];
   loading: boolean;
   scrollRef: RefObject<HTMLDivElement>;
 }) {
@@ -116,7 +114,7 @@ function MessageList({
   );
 }
 
-function MessageRow({ msg }: { msg: Msg }) {
+function MessageRow({ msg }: { msg: ChatMessage }) {
   return (
     <div>
       <div className={`row ${msg.role}`}>
