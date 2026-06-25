@@ -55,9 +55,7 @@ Three design commitments shape everything:
 # 1. install
 npm install
 
-# 2. configure — create .env.local with your two secrets
-cp .env.example .env.local
-#   then edit .env.local:
+# 2. configure — create .env.local with your two secrets:
 #   OPENAI_API_KEY=sk-...
 #   DATABASE_URL=postgresql://...   (your Neon connection string)
 
