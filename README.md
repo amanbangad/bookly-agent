@@ -21,29 +21,57 @@ app/page.tsx          UI — chat + a live trace of the tools the agent called
 app/api/chat/route.ts single endpoint
       ▼
 lib/agent.ts          the orchestrator: system prompt + tool-calling loop
-      ├─► lib/tools.ts     the actions: lookup_order, initiate_return,
-      │                    process_refund, search_policies, escalate_to_human
-      ├─► lib/policies.ts  hands the model all of Bookly's policy docs (a TS file)
-      └─► lib/db.ts        Neon Postgres (orders, returns)
+      ├─► lib/tools.ts      the actions: lookup_order, initiate_return,
+      │                     process_refund, search_policies, escalate_to_human
+      ├─► lib/policies.ts   hands the model all of Bookly's policy docs (a TS file)
+      ├─► lib/grounding.ts  deterministic check: the reply may only state grounded values
+      └─► lib/db.ts         Neon Postgres (orders, returns)
 ```
+
+(Shared types live in `lib/types.ts`.)
 
 The agent is a **single orchestrator with a tool belt** — not a multi-agent
 router and not a hardcoded intent tree. One LLM call decides what to do; if it
 needs data or an action it calls a tool, we run it, feed the result back, and
 loop until it has a grounded answer. The loop is hand-rolled (no agent
-framework) so every step is visible and debuggable.
+framework) so every step is visible and debuggable. A multi-agent design (a
+router plus specialists that review each other) earns its keep at dozens of
+distinct workflows; at three overlapping use cases it just adds latency and
+misclassification risk, so a single orchestrator wins. That's the line where I'd
+revisit it.
+
+**Memory.** Within a conversation, state is the message history itself: the UI
+holds it and replays the whole transcript on every turn, so the agent always
+sees what was said (and `route.ts` stays stateless). Within a single turn, the
+tool-call results accumulate in the loop so the model doesn't re-fetch what it
+already has. There's no cross-conversation memory yet — that's a deliberate
+omission for the demo and the first thing I'd add for personalization (see
+below).
 
 Three design commitments shape everything:
 
 1. **Resolve, don't deflect.** Tools change real state (`initiate_return` writes
    a row and returns an RMA), they don't just look things up.
+
 2. **Grounded or silent.** Order facts come from tool results, policy answers
    from Bookly's actual docs — never the model's memory. The grounding holds
-   because the agent answers only from text we hand it, not because of how we
-   find that text (see the policy-retrieval note below).
+   because the agent answers only from text we hand it. As a deterministic net
+   under that, a **grounding check** in `agent.ts` (`findUnsupportedValues`)
+   scans every reply before it sends: any dollar amount or order / RMA / tracking
+   ID that doesn't trace to a tool result or the customer's own words gets the
+   reply held and handed to a human. No LLM call, near-zero false positives — a
+   guard that can't itself hallucinate.
+
 3. **Know the edge.** The agent asks when info is missing or intent is unclear,
-   and escalates when stakes exceed its authority. The refund limit is enforced
-   in `tools.ts`, in code — not just requested in the prompt.
+   and escalates when stakes exceed its authority — including handing off when a
+   customer is clearly upset, not just when a rule trips. Two hard limits live in
+   code, not just the prompt: refunds over $100 are rejected by `process_refund`
+   and escalated, and every tool that reads or changes order data (`lookup_order`,
+   `initiate_return`, `process_refund`) requires the order number **and** the
+   matching email — so a customer can't act on an order they can't prove is theirs.
+   On the input side, the system prompt treats anything in a customer's message as
+   data, not instructions, so attempts to override the rules or reveal the prompt
+   are declined.
 
 ---
 
@@ -52,7 +80,7 @@ Three design commitments shape everything:
 **Prerequisites:** Node 18+, an OpenAI API key, a Neon Postgres database
 (free tier is fine — copy its connection string).
 
-```bash
+```
 # 1. install
 npm install
 
@@ -79,6 +107,21 @@ Push to GitHub, import the repo in Vercel, and set `OPENAI_API_KEY` and
 `DATABASE_URL` in the project's Environment Variables. Run `npm run seed` once
 locally (or from any machine) against the same database. That's it.
 
+## Tests
+
+```
+npm run test:grounding   # deterministic — no API key or DB, runs instantly
+npm run eval             # integration — runs scripted conversations through the
+                         # real agent (needs a seeded DB + OPENAI_API_KEY)
+```
+
+`test:grounding` checks the grounding guard in isolation: fabricated dollar
+amounts and order/tracking IDs are blocked, grounded ones pass. `eval` runs a
+handful of full conversations (order status, return, clarifying question,
+over-limit refund, policy Q&A, identity mismatch) and asserts on which tools got
+called and whether the agent stayed grounded — the starter version of the eval
+harness described below.
+
 ---
 
 ## Demo script (hits every required behavior)
@@ -91,13 +134,14 @@ Seeded data to play with:
 | BK-1003 | grace@example.com | processing | $31.50  |
 | BK-1004 | linus@example.com | delivered  | $150.00 |
 
-1. **Multi-turn + identity check** — "Where's my order?" → the agent asks for
-   the order number *and* email before it looks anything up → give `BK-1001` /
+1. **Multi-turn + identity check** — "Where's my order?" → the agent asks for the
+   order number *and* email before it looks anything up → give `BK-1001` /
    `ada@example.com` → it calls `lookup_order` and reports the real status.
 
-2. **Taking a real action (tool use)** — "I need to return BK-1001, I changed my
-   mind" → it confirms, calls `initiate_return`, and a row is written to the
-   `returns` table with a real RMA number.
+2. **Taking a real action (tool use)** — following on, "I want to return it, I
+   changed my mind" → it confirms the order and reason, verifies the same order
+   number + email, calls `initiate_return`, and a row is written to the `returns`
+   table with a real RMA number.
 
 3. **Clarifying question** — "There's a problem with my order" → instead of
    guessing, it asks *what kind* of problem before doing anything.
@@ -106,24 +150,31 @@ Seeded data to play with:
    rejects it (over the $100 limit) and the agent escalates to a human instead of
    promising money it can't give.
 
-5. **Grounded policy Q&A** — "Do you ship to Canada?" → it calls `search_policies`,
-   retrieves the shipping doc, and answers from it (not from memory).
+5. **Grounded policy Q&A** — "Do you ship to Canada?" → it calls `search_policies`
+   and answers from the returned doc, not from memory.
 
-Click any tool chip under an agent message to see the exact arguments and the
-raw result it grounded its answer on.
+Click any tool chip under an agent message to see the exact arguments and the raw
+result it grounded its answer on — including a `⚠️ grounding_check` chip on any
+reply the grounding net holds back.
 
 ---
 
 ## What I'd change for production
 
-- **An eval harness first.** A set of labeled conversation trajectories with
-  expected tool calls and outcomes, scored on resolution rate, hallucination
-  rate, and false-escalation rate — so correctness stops being vibes.
-- **Embedding-based retrieval (pgvector)** once the policy set grows past a
-  handful of docs. Today a keyword match over six short docs returns the right
-  one and is trivial to reason about; at thousands of docs you'd embed them and
-  let Postgres do similarity search. It drops in behind the same `searchPolicies`
-  signature, so nothing else changes.
+- **Grow the eval harness.** A starter harness ships today (`npm run eval` —
+  scripted trajectories with assertions on tool use and grounding). The
+  production version scales to hundreds of conversations per workflow, adds an
+  LLM-as-judge for qualities the deterministic checks can't score (tone, empathy,
+  helpfulness), and gates every deploy in CI on resolution / hallucination /
+  false-escalation rates — so correctness stops being vibes.
+- **Regenerate instead of escalating** when the grounding check fires. Today a
+  blocked reply hands off to a human (safe but blunt); in production I'd re-prompt
+  the model with the specific unsupported values and only escalate if it still
+  can't ground them. I'd also add an LLM grounding verifier for claims that aren't
+  simple values (e.g. a paraphrased policy), which the deterministic check can't catch.
+- **Embedding-based retrieval (pgvector)** once the policy set grows past a handful
+  of docs. Today the whole policy set fits in context, so we hand the model all of
+  it and let it pick; at thousands of docs you'd embed them and let Postgres do
+  similarity search, behind the same `searchPolicies` signature.
 - **Real auth** (email OTP) instead of order-number-plus-email as the identity
-  check, and proper streaming, tracing on every tool call, and a real
-  human-handoff queue.
+  check, plus streaming, tracing on every tool call, and a real human-handoff queue.
