@@ -23,7 +23,7 @@ app/api/chat/route.ts single endpoint
 lib/agent.ts          the orchestrator: system prompt + tool-calling loop
       ├─► lib/tools.ts     the actions: lookup_order, initiate_return,
       │                    process_refund, search_policies, escalate_to_human
-      ├─► lib/policies.ts  keyword lookup over Bookly's policy docs (a TS file)
+      ├─► lib/policies.ts  hands the model all of Bookly's policy docs (a TS file)
       └─► lib/db.ts        Neon Postgres (orders, returns)
 ```
 
