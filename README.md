@@ -69,7 +69,10 @@ Three design commitments shape everything:
    and escalated, and every tool that reads or changes order data (`lookup_order`,
    `initiate_return`, `process_refund`) requires the order number **and** the
    matching email — so a customer can't act on an order they can't prove is theirs.
-   On the input side, the system prompt treats anything in a customer's message as data, not instructions, so attempts to override the rules or reveal the prompt are declined.
+   On the input side, the system prompt treats anything in a customer's message as
+   data, not instructions, so attempts to override the rules or reveal the prompt
+   are declined.
+
 ---
 
 ## Run it locally
